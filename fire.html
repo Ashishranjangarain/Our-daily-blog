@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Dashboard</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;display:grid;grid-template-rows:60px 1fr 200px;grid-template-columns:200px 1fr 200px;grid-template-areas:"header header header" "profile blog video" "profile blog talk";height:100vh;background-color:#f0f2f5;}
+header{grid-area:header;background-color:#007bff;color:white;display:flex;align-items:center;padding:0 20px;font-size:1.5em;font-weight:bold;}
+#profile{grid-area:profile;background-color:#fff;padding:20px;box-shadow:0 2px 6px rgba(0,0,0,0.1);display:flex;flex-direction:column;align-items:center;}
+#profile img{width:80px;height:80px;border-radius:50%;margin-bottom:10px;}
+#blog{grid-area:blog;background-color:#fff;padding:15px;overflow-y:auto;box-shadow:0 2px 6px rgba(0,0,0,0.1);}
+#blog h2{text-align:center;margin-top:0;}
+#video{grid-area:video;background-color:#fff;padding:15px;box-shadow:0 2px 6px rgba(0,0,0,0.1);overflow-y:auto;}
+#video h2{text-align:center;margin-top:0;}
+#talk{grid-area:talk;background-color:#fff;padding:15px;box-shadow:0 2px 6px rgba(0,0,0,0.1);overflow-y:auto;}
+#talk h2{text-align:center;margin-top:0;}
+textarea,input,button{width:100%;margin-top:5px;padding:5px;}
+button{background-color:#007bff;color:white;border:none;border-radius:5px;cursor:pointer;}
+button:hover{background-color:#0056b3;}
+.blog-post{background-color:#f9f9f9;padding:10px;margin-bottom:10px;border-radius:5px;}
+#chatMessages,#videoList{background-color:#f1f1f1;padding:5px;border-radius:5px;height:120px;overflow-y:auto;margin-bottom:5px;}
+</style>
+</head>
+<body>
+
+<header>Daily Dashboard</header>
+
+<div id="profile">
+    <img src="https://via.placeholder.com/80" alt="Profile" id="profilePic">
+    <h3 id="profileName">Guest</h3>
+    <p id="profileEmail"></p>
+    <input type="email" id="signupEmail" placeholder="Email">
+    <input type="password" id="signupPass" placeholder="Password">
+    <button onclick="signup()">Sign Up</button>
+    <button onclick="login()">Login</button>
+    <button onclick="logout()">Logout</button>
+</div>
+
+<div id="blog">
+    <h2>Daily Blog</h2>
+    <textarea id="newPost" rows="4" placeholder="Write your daily blog..."></textarea>
+    <button onclick="addBlogPost()">Add Post</button>
+    <div id="blogPosts"></div>
+</div>
+
+<div id="video">
+    <h2>Daily Video</h2>
+    <input type="file" id="videoUpload" accept="video/*">
+    <button onclick="uploadVideo()">Upload Video</button>
+    <div id="videoList"></div>
+</div>
+
+<div id="talk">
+    <h2>Talk Section</h2>
+    <textarea id="chatMessage" rows="3" placeholder="Type your message..."></textarea>
+    <button onclick="sendMessage()">Send</button>
+    <div id="chatMessages"></div>
+</div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
+<script>
+  // 🔹 Firebase config – Replace with your own
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+  const storage = firebase.storage();
+
+  // 🔹 Authentication
+  function signup(){
+      const email = document.getElementById('signupEmail').value;
+      const pass = document.getElementById('signupPass').value;
+      auth.createUserWithEmailAndPassword(email, pass)
+      .then(user=>{ alert('Signed up!'); updateProfile(); })
+      .catch(err=>alert(err.message));
+  }
+
+  function login(){
+      const email = document.getElementById('signupEmail').value;
+      const pass = document.getElementById('signupPass').value;
+      auth.signInWithEmailAndPassword(email, pass)
+      .then(user=>{ alert('Logged in!'); updateProfile(); loadAllData(); })
+      .catch(err=>alert(err.message));
+  }
+
+  function logout(){
+      auth.signOut().then(()=>{ alert('Logged out'); updateProfile(); });
+  }
+
+  auth.onAuthStateChanged(user=>{
+      updateProfile();
+      if(user) loadAllData();
+  });
+
+  function updateProfile(){
+      const user = auth.currentUser;
+      if(user){
+          document.getElementById('profileName').innerText = user.email.split('@')[0];
+          document.getElementById('profileEmail').innerText = user.email;
+      } else {
+          document.getElementById('profileName').innerText = 'Guest';
+          document.getElementById('profileEmail').innerText = '';
+      }
+  }
+
+  // 🔹 Blog functionality
+  function addBlogPost(){
+      const user = auth.currentUser;
+      const content = document.getElementById('newPost').value.trim();
+      if(!user){ alert('Login first!'); return; }
+      if(!content){ alert('Write something!'); return; }
+      db.collection('blogs').add({
+          user:user.email,
+          content:content,
+          timestamp:firebase.firestore.FieldValue.serverTimestamp()
+      });
+      document.getElementById('newPost').value='';
+  }
+
+  // Display blogs in real-time
+  db.collection('blogs').orderBy('timestamp','desc')
+    .onSnapshot(snapshot=>{
+        const blogDiv = document.getElementById('blogPosts');
+        blogDiv.innerHTML='';
+        snapshot.forEach(doc=>{
+            const data = doc.data();
+            const div = document.createElement('div');
+            div.className='blog-post';
+            const date = data.timestamp ? new Date(data.timestamp.seconds*1000).toLocaleString() : '';
+            div.innerHTML=`<strong>${data.user} - ${date}</strong><p>${data.content}</p>`;
+            blogDiv.appendChild(div);
+        });
+    });
+
+  // 🔹 Video upload (Firebase Storage)
+  function uploadVideo(){
+      const user = auth.currentUser;
+      const file = document.getElementById('videoUpload').files[0];
+      if(!user){ alert('Login first!'); return; }
+      if(!file){ alert('Select a video!'); return; }
+      const storageRef = storage.ref('videos/'+Date.now()+'_'+file.name);
+      storageRef.put(file).then(snapshot=>{
+          snapshot.ref.getDownloadURL().then(url=>{
+              db.collection('videos').add({user:user.email,url:url,timestamp:firebase.firestore.FieldValue.serverTimestamp()});
+          });
+      });
+      document.getElementById('videoUpload').value='';
+  }
+
+  // Display videos
+  db.collection('videos').orderBy('timestamp','desc')
+    .onSnapshot(snapshot=>{
+        const videoDiv = document.getElementById('videoList');
+        videoDiv.innerHTML='';
+        snapshot.forEach(doc=>{
+            const data=doc.data();
+            const div=document.createElement('div');
+            div.innerHTML=`<p>${data.user}</p><video width="100%" controls src="${data.url}"></video>`;
+            videoDiv.appendChild(div);
+        });
+    });
+
+  // 🔹 Chat functionality
+  function sendMessage(){
+      const user = auth.currentUser;
+      const msg = document.getElementById('chatMessage').value.trim();
+      if(!user){ alert('Login first!'); return; }
+      if(!msg){ alert('Type a message!'); return; }
+      db.collection('chat').add({user:user.email,msg:msg,timestamp:firebase.firestore.FieldValue.serverTimestamp()});
+      document.getElementById('chatMessage').value='';
+  }
+
+  // Display chat messages
+  db.collection('chat').orderBy('timestamp','desc')
+    .onSnapshot(snapshot=>{
+        const chatDiv=document.getElementById('chatMessages');
+        chatDiv.innerHTML='';
+        snapshot.forEach(doc=>{
+            const data=doc.data();
+            const date = data.timestamp ? new Date(data.timestamp.seconds*1000).toLocaleTimeString() : '';
+            const div=document.createElement('div');
+            div.innerHTML=`<strong>${data.user} - ${date}:</strong> ${data.msg}`;
+            chatDiv.appendChild(div);
+        });
+    });
+
+  // Load all data after login
+  function loadAllData(){ /* blogs/videos/chat already real-time, nothing extra needed */ }
+
+</script>
+
+</body>
+</html>
